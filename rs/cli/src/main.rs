@@ -1,3 +1,4 @@
+use std::cell::UnsafeCell;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::{env, io::Error};
@@ -6,10 +7,11 @@ use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tinyaudio::prelude::*;
 use tokio::net::{TcpListener, TcpStream};
 
 #[derive(Serialize, Deserialize)]
-struct NodeRepr {
+pub struct NodeRepr {
     hash: i32,
     kind: String,
     props: serde_json::Map<String, serde_json::Value>,
@@ -17,7 +19,7 @@ struct NodeRepr {
     children: Vec<NodeRepr>,
 }
 
-struct ShallowNodeRepr {
+pub struct ShallowNodeRepr {
     hash: i32,
     kind: String,
     props: serde_json::Map<String, serde_json::Value>,
@@ -52,23 +54,28 @@ mod ffi {
     }
 }
 
+// Thread safety is handled on the C++ side
+unsafe impl Send for ffi::RuntimeBindings {}
+unsafe impl Sync for ffi::RuntimeBindings {}
+
 pub struct RuntimeWrapper {
-    runtime: Arc<Mutex<cxx::UniquePtr<ffi::RuntimeBindings>>>,
-    node_map: BTreeMap<i32, ShallowNodeRepr>,
+    runtime: UnsafeCell<cxx::UniquePtr<ffi::RuntimeBindings>>,
+    node_map: Mutex<BTreeMap<i32, ShallowNodeRepr>>,
 }
 
 impl RuntimeWrapper {
     pub fn new() -> Self {
         Self {
-            runtime: Arc::new(Mutex::new(ffi::new_runtime_instance(44100.0, 512))),
-            node_map: BTreeMap::new(),
+            runtime: UnsafeCell::new(ffi::new_runtime_instance(44100.0, 512)),
+            node_map: Mutex::new(BTreeMap::new()),
         }
     }
 
-    pub fn reconcile(&mut self, roots: &Vec<NodeRepr>) -> serde_json::Value {
+    pub fn reconcile(&self, roots: &Vec<NodeRepr>) -> serde_json::Value {
         let mut visited: HashSet<i32> = HashSet::new();
         let mut queue: VecDeque<&NodeRepr> = VecDeque::new();
         let mut instructions = serde_json::Value::Array(vec![]);
+        let mut node_map = self.node_map.lock().unwrap();
 
         for root in roots.iter() {
             // TODO: ref?
@@ -83,7 +90,7 @@ impl RuntimeWrapper {
             }
 
             // Mount
-            if !self.node_map.contains_key(&next.hash) {
+            if !node_map.contains_key(&next.hash) {
                 // Create node
                 instructions
                     .as_array_mut()
@@ -100,7 +107,7 @@ impl RuntimeWrapper {
                     ]));
                 }
 
-                self.node_map.insert(next.hash, shallow_clone(&next));
+                node_map.insert(next.hash, shallow_clone(&next));
             }
 
             // Props
@@ -136,6 +143,26 @@ impl RuntimeWrapper {
 
         instructions
     }
+
+    pub fn render(&self, roots: &Vec<NodeRepr>) -> Result<i32, Error> {
+        let instructions = self.reconcile(&roots);
+
+        unsafe {
+            let internal = self.runtime.get();
+            let result = internal
+                .as_mut()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .apply_instructions(&instructions.to_string());
+
+            Ok(result)
+        }
+    }
+
+    pub fn process(&self) {
+        println!("YE");
+    }
 }
 
 // Basically the cxx::UniquePtr type wraps a C-style opaque pointer and
@@ -149,6 +176,7 @@ impl RuntimeWrapper {
 // we'll be ok. I think there's probably a cleaner way, but this is good enough for
 // now, I want to get to the fun stuff.
 unsafe impl Send for RuntimeWrapper {}
+unsafe impl Sync for RuntimeWrapper {}
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -170,6 +198,43 @@ async fn main() -> Result<(), Error> {
 }
 
 async fn accept_connection(stream: TcpStream) {
+    let params = OutputDeviceParameters {
+        channels_count: 2,
+        sample_rate: 44100,
+        channel_sample_count: 512,
+    };
+
+    // Ok so this solves the whole thread safety thing by using an Arc<T>
+    // to get the references across threads (one on the rt thread, one that gets
+    // run on some thread pool thread), an UnsafeCell on the internal runtime (because
+    // we guarantee safety at the C++ level when we interact with it) and a Mutex on
+    // the local node_map so that we can promise (to Rust) that our writes to the node_map
+    // during reconcile are thread-safe.
+    let runtime = Arc::new(RuntimeWrapper::new());
+    let device = {
+        let result = run_output_device(params, {
+            let mut clock = 0f32;
+            let clone = runtime.clone();
+            move |data| {
+                clone.process();
+                for samples in data.chunks_mut(params.channels_count) {
+                    clock = (clock + 1.0) % params.sample_rate as f32;
+                    let value = (clock * 440.0 * 2.0 * std::f32::consts::PI
+                        / params.sample_rate as f32)
+                        .sin();
+                    for sample in samples {
+                        *sample = value;
+                    }
+                }
+            }
+        });
+
+        match result {
+            Ok(v) => Some(v),
+            Err(_) => None,
+        }
+    };
+
     let addr = stream
         .peer_addr()
         .expect("connected streams should have a peer address");
@@ -181,7 +246,6 @@ async fn accept_connection(stream: TcpStream) {
 
     info!("New WebSocket connection: {}", addr);
 
-    let mut runtime = RuntimeWrapper::new();
     let (mut write, mut read) = ws_stream.split();
 
     while let Ok(next) = read.try_next().await {
@@ -193,16 +257,8 @@ async fn accept_connection(stream: TcpStream) {
                         serde_json::from_str(text).unwrap_or(Directive { graph: None });
 
                     if let Some(graph) = directive.graph {
-                        let instructions = runtime.reconcile(&graph);
-                        let result = runtime
-                            .runtime
-                            .lock()
-                            .unwrap()
-                            .as_mut()
-                            .unwrap()
-                            .apply_instructions(&instructions.to_string());
-
-                        println!("Apply instructions result: {}", result);
+                        let result = runtime.render(&graph);
+                        println!("Apply instructions result: {}", result.unwrap_or(-1));
                     }
 
                     // TODO: Properly handle the write failure case
