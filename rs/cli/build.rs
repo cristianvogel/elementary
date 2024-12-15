@@ -3,7 +3,7 @@ fn main() {
     let runtime_include_dir = std::path::Path::new(&build_dir).join("../../runtime");
     let cli_include_dir = std::path::Path::new(&build_dir).join("../../cli");
 
-    cxx_build::bridge("src/main.rs")
+    cxx_build::bridge("src/engine.rs")
         .include(runtime_include_dir.canonicalize().unwrap())
         .include(cli_include_dir.canonicalize().unwrap())
         .file("src/Bindings.cpp")
