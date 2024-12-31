@@ -39,19 +39,49 @@ fn main() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(run_tcp_listener(addr, engine_main))
+        .block_on(run_event_loop_main(addr, engine_main))
         .expect("Failed to start event loop")
 }
 
-async fn run_tcp_listener(addr: String, engine_main: engine::MainHandle) -> Result<(), Error> {
+async fn run_event_loop_main(addr: String, engine_main: engine::MainHandle) -> Result<(), Error> {
+    let shared_engine_main = Arc::new(Mutex::new(engine_main));
+
+    let (first, second) = tokio::join!(
+        tokio::spawn(run_event_poller(shared_engine_main.clone())),
+        tokio::spawn(run_tcp_listener(addr, shared_engine_main.clone())),
+    );
+
+    first.unwrap_or(second.unwrap_or(Ok(())))
+}
+
+async fn run_event_poller(engine_main: Arc<Mutex<engine::MainHandle>>) -> Result<(), Error> {
+    let mut interval =
+        tokio::time::interval(tokio::time::Duration::from_millis((1000.0 / 30.0) as u64));
+
+    loop {
+        interval.tick().await;
+
+        if let Ok(result) = engine_main.lock().unwrap().process_queued_events() {
+            if let Some(events) = result.as_array() {
+                for evt in events.iter() {
+                    println!("[Event] {}", evt.to_string());
+                }
+            }
+        }
+    }
+}
+
+async fn run_tcp_listener(
+    addr: String,
+    engine_main: Arc<Mutex<engine::MainHandle>>,
+) -> Result<(), Error> {
     // Create the TCP listener we'll accept connections on
     let try_socket = TcpListener::bind(&addr).await;
     let listener = try_socket.expect("Failed to bind");
     info!("Listening on: {}", addr);
 
-    let shared_engine_main = Arc::new(Mutex::new(engine_main));
     while let Ok((stream, _)) = listener.accept().await {
-        tokio::spawn(accept_connection(stream, shared_engine_main.clone()));
+        tokio::spawn(accept_connection(stream, engine_main.clone()));
     }
 
     Ok(())

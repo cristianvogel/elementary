@@ -13,10 +13,10 @@ public:
     ~RuntimeBindings();
 
     int apply_instructions(rust::String const& batch);
+    rust::String process_queued_events();
     void process(float const* inputData, float* outputData, size_t numChannels, size_t numFrames);
 
 private:
-    std::vector<float> scratchData;
     elem::Runtime<float> m_runtime;
 };
 

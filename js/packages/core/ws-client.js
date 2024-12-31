@@ -11,7 +11,7 @@ socket.addEventListener("open", (event) => {
     let f = 110 * i;
 
     socket.send(JSON.stringify({
-      graph: formatRoots([el.cycle(el.const({key: 'a', value: f})), el.cycle(el.const({key: 'b', value: f * 1.01}))]),
+      graph: formatRoots([el.cycle(el.const({key: 'a', value: f})), el.cycle(el.meter({}, el.const({key: 'b', value: f * 1.01})))]),
     }));
   }, 500);
 });

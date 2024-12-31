@@ -46,6 +46,7 @@ mod ffi {
 
         fn new_runtime_instance(sample_rate: f64, block_size: usize) -> UniquePtr<RuntimeBindings>;
         fn apply_instructions(self: Pin<&mut RuntimeBindings>, batch: &String) -> i32;
+        fn process_queued_events(self: Pin<&mut RuntimeBindings>) -> String;
 
         unsafe fn process(
             self: Pin<&mut RuntimeBindings>,
@@ -77,6 +78,21 @@ impl EngineInternal {
                 .apply_instructions(&instructions.to_string());
 
             Ok(result)
+        }
+    }
+
+    pub fn process_queued_events(&self) -> Result<serde_json::Value, &str> {
+        unsafe {
+            let batch = self
+                .inner
+                .get()
+                .as_mut()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .process_queued_events();
+
+            Ok(serde_json::from_str(&batch).unwrap())
         }
     }
 }
@@ -198,6 +214,10 @@ impl MainHandle {
     pub fn render(&mut self, roots: &Vec<NodeRepr>) -> Result<i32, &str> {
         let instructions = self.reconcile(&roots);
         self.inner.apply_instructions(&instructions)
+    }
+
+    pub fn process_queued_events(&mut self) -> Result<serde_json::Value, &str> {
+        self.inner.process_queued_events()
     }
 }
 
