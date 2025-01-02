@@ -1,5 +1,6 @@
 use std::cell::UnsafeCell;
 use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,83 @@ pub struct NodeRepr {
     props: serde_json::Map<String, serde_json::Value>,
     output_channel: u32,
     children: Vec<NodeRepr>,
+}
+
+fn create_node(
+    kind: &str,
+    props: serde_json::Map<String, serde_json::Value>,
+    children: Vec<NodeRepr>,
+) -> NodeRepr {
+    let mut hasher = DefaultHasher::new();
+
+    kind.hash(&mut hasher);
+    props.hash(&mut hasher);
+
+    for child in children.iter() {
+        child.hash.hash(&mut hasher);
+    }
+
+    NodeRepr {
+        hash: hasher.finish() as i32,
+        kind: kind.to_string(),
+        props,
+        output_channel: 0,
+        children,
+    }
+}
+
+fn root(x: NodeRepr) -> NodeRepr {
+    create_node(
+        "root",
+        serde_json::json!({"channel": 0.0})
+            .as_object()
+            .unwrap()
+            .clone(),
+        vec![x],
+    )
+}
+
+fn sin(x: NodeRepr) -> NodeRepr {
+    create_node("sin", Default::default(), vec![x])
+}
+
+fn mul2(x: NodeRepr, y: NodeRepr) -> NodeRepr {
+    create_node("mul", Default::default(), vec![x, y])
+}
+
+fn phasor(rate: NodeRepr) -> NodeRepr {
+    create_node("phasor", Default::default(), vec![rate])
+}
+
+#[derive(Serialize, Deserialize)]
+struct ConstNodeProps {
+    key: Option<String>,
+    value: f64,
+}
+
+fn constant(props: &ConstNodeProps) -> NodeRepr {
+    create_node(
+        "const",
+        serde_json::to_value(&props)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone(),
+        vec![],
+    )
+}
+
+macro_rules! constant {
+    // Match the macro pattern with a key-value pair in the first argument
+    ({$($key:ident: $value:expr),*}) => {
+        {
+            // Create the props struct with the provided key-value pairs
+            let props = ConstNodeProps { $($key: $value),* };
+
+            // Call the constant function with the constructed props
+            constant(&props)
+        }
+    };
 }
 
 struct ShallowNodeRepr {
@@ -225,8 +303,16 @@ pub fn new_engine(sample_rate: f64, block_size: usize) -> (MainHandle, ProcessHa
     let cell = UnsafeCell::new(ffi::new_runtime_instance(sample_rate, block_size));
     let arc = Arc::new(EngineInternal { inner: cell });
 
-    (
-        MainHandle::new(arc.clone()),
-        ProcessHandle::new(arc.clone()),
-    )
+    let mut main = MainHandle::new(arc.clone());
+    let proc = ProcessHandle::new(arc.clone());
+
+    let cycle = root(sin(mul2(
+        constant!({key: None, value: 2.0 * std::f64::consts::PI}),
+        phasor(constant!({key: None, value: 110.0})),
+    )));
+    let roots = vec![cycle];
+
+    main.render(&roots);
+
+    (main, proc)
 }
