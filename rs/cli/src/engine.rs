@@ -1,5 +1,5 @@
 use std::cell::UnsafeCell;
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
@@ -110,9 +110,97 @@ fn shallow_clone(node: &NodeRepr) -> ShallowNodeRepr {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct Directive {
     pub graph: Option<Vec<NodeRepr>>,
+    pub resources: Option<HashMap<String, String>>,
+}
+
+pub trait FloatType: 'static {}
+impl FloatType for f32 {}
+impl FloatType for f64 {}
+
+#[derive(Default)]
+pub struct AudioBuffer<T> {
+    data: Vec<T>,
+    channels: usize,
+    frames: usize,
+}
+
+impl<T> AudioBuffer<T>
+where
+    T: FloatType + Clone + Default,
+{
+    pub fn new(channels: usize, frames: usize) -> Self {
+        Self {
+            data: vec![Default::default(); channels * frames],
+            channels,
+            frames,
+        }
+    }
+}
+
+pub struct ResolvedDirective {
+    pub graph: Option<Vec<NodeRepr>>,
+    pub resources: Option<HashMap<String, AudioBuffer<f32>>>,
+}
+
+fn decode_audio_data(data: &Vec<u8>) -> Option<AudioBuffer<f32>> {
+    use hound;
+
+    let mut reader = hound::WavReader::new(data.as_slice()).unwrap();
+    let bit_depth = reader.spec().bits_per_sample as f64;
+    dbg!(reader.spec().sample_rate);
+    let interleaved_buffer = reader
+        .samples::<i32>()
+        .map(|x| x.unwrap() as f64 / (2.0f64.powf(bit_depth) - 1.0))
+        .collect::<Vec<f64>>();
+    let num_channels = reader.spec().channels as usize;
+    let num_frames = (reader.len() as usize) / num_channels;
+
+    // Hmm... I'm confused. The Hound docs suggest that the data is interleaved,
+    // but it doesn't actually appear to be.
+    // let mut deinterleaved = Vec::new();
+    // deinterleaved.resize(interleaved_buffer.len(), 0.0f32);
+
+    // for i in 0..num_channels {
+    //     for j in 0..num_frames {
+    //         deinterleaved[i * num_frames + j] = interleaved_buffer[i + j * num_channels] as f32;
+    //     }
+    // }
+
+    Some(AudioBuffer::<f32> {
+        data: interleaved_buffer
+            .into_iter()
+            .map(|x| x as f32)
+            .collect::<Vec<f32>>(),
+        channels: num_channels,
+        frames: num_frames,
+    })
+}
+
+async fn resolve_resources(
+    resources: &HashMap<String, String>,
+) -> HashMap<String, AudioBuffer<f32>> {
+    let mut result = HashMap::new();
+
+    for (name, path) in resources.iter() {
+        if let Ok(contents) = tokio::fs::read(path).await {
+            let _ = result.insert(name.clone(), decode_audio_data(&contents).unwrap());
+        }
+    }
+
+    result
+}
+
+pub async fn resolve_directive(directive: Directive) -> ResolvedDirective {
+    ResolvedDirective {
+        graph: directive.graph,
+        resources: match directive.resources {
+            None => None,
+            Some(rs) => Some(resolve_resources(&rs).await),
+        },
+    }
 }
 
 #[cxx::bridge]
@@ -123,6 +211,13 @@ mod ffi {
         type RuntimeBindings;
 
         fn new_runtime_instance(sample_rate: f64, block_size: usize) -> UniquePtr<RuntimeBindings>;
+        fn add_shared_resource(
+            self: Pin<&mut RuntimeBindings>,
+            name: &String,
+            channels: usize,
+            frames: usize,
+            data: &[f32],
+        ) -> i32;
         fn apply_instructions(self: Pin<&mut RuntimeBindings>, batch: &String) -> i32;
         fn process_queued_events(self: Pin<&mut RuntimeBindings>) -> String;
 
@@ -144,6 +239,24 @@ unsafe impl Send for EngineInternal {}
 unsafe impl Sync for EngineInternal {}
 
 impl EngineInternal {
+    pub fn add_shared_resource(
+        &self,
+        name: &String,
+        channels: usize,
+        frames: usize,
+        data: &[f32],
+    ) -> i32 {
+        unsafe {
+            self.inner
+                .get()
+                .as_mut()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .add_shared_resource(name, channels, frames, data)
+        }
+    }
+
     pub fn apply_instructions(&self, instructions: &serde_json::Value) -> Result<i32, &str> {
         unsafe {
             let result = self
@@ -289,9 +402,25 @@ impl MainHandle {
         instructions
     }
 
-    pub fn render(&mut self, roots: &Vec<NodeRepr>) -> Result<i32, &str> {
-        let instructions = self.reconcile(&roots);
-        self.inner.apply_instructions(&instructions)
+    pub fn render(&mut self, directive: ResolvedDirective) -> Result<i32, &str> {
+        if let Some(resources) = directive.resources {
+            for (k, v) in resources.into_iter() {
+                let rc =
+                    self.inner
+                        .add_shared_resource(&k, v.channels, v.frames, v.data.as_slice());
+                println!("Add resource result: {}", rc);
+            }
+        }
+
+        if let Some(graph) = directive.graph {
+            let instructions = self.reconcile(&graph);
+            let result = self.inner.apply_instructions(&instructions);
+            println!("Apply instructions result: {}", result.unwrap_or(-1));
+
+            result
+        } else {
+            Ok(0)
+        }
     }
 
     pub fn process_queued_events(&mut self) -> Result<serde_json::Value, &str> {
@@ -312,7 +441,10 @@ pub fn new_engine(sample_rate: f64, block_size: usize) -> (MainHandle, ProcessHa
     )));
     let roots = vec![cycle];
 
-    main.render(&roots);
+    let _ = main.render(ResolvedDirective {
+        graph: Some(roots),
+        resources: None,
+    });
 
     (main, proc)
 }

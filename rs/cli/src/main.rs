@@ -3,6 +3,7 @@ mod engine;
 use std::sync::{Arc, Mutex};
 use std::{env, io::Error};
 
+use engine::resolve_directive;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use log::info;
 use tinyaudio::prelude::*;
@@ -107,12 +108,12 @@ async fn accept_connection(stream: TcpStream, engine_main: Arc<Mutex<engine::Mai
                 Ok(text) => {
                     println!("Received a message from {}: {}", addr, text);
                     let directive: engine::Directive =
-                        serde_json::from_str(text).unwrap_or(engine::Directive { graph: None });
+                        serde_json::from_str(text).unwrap_or_default();
+                    let resolved = resolve_directive(directive).await;
 
-                    if let Some(graph) = directive.graph {
+                    {
                         let mut main = engine_main.lock().unwrap();
-                        let result = main.render(&graph);
-                        println!("Apply instructions result: {}", result.unwrap_or(-1));
+                        let _ = main.render(resolved);
                     }
 
                     // TODO: Properly handle the write failure case

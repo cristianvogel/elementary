@@ -12,6 +12,7 @@ public:
     RuntimeBindings(double sampleRate, size_t blockSize);
     ~RuntimeBindings();
 
+    int add_shared_resource(rust::String const& name, size_t numChannels, size_t numFrames, rust::Slice<float const> data);
     int apply_instructions(rust::String const& batch);
     rust::String process_queued_events();
     void process(float const* inputData, float* outputData, size_t numChannels, size_t numFrames);
