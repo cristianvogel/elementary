@@ -206,7 +206,7 @@ pub async fn resolve_directive(directive: Directive) -> ResolvedDirective {
 #[cxx::bridge]
 mod ffi {
     unsafe extern "C++" {
-        include!("cli/src/Bindings.h");
+        include!("elem/src/Bindings.h");
 
         type RuntimeBindings;
 

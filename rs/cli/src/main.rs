@@ -1,9 +1,8 @@
-mod engine;
+use elem::engine;
 
 use std::sync::{Arc, Mutex};
 use std::{env, io::Error};
 
-use engine::resolve_directive;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use log::info;
 use tinyaudio::prelude::*;
@@ -109,7 +108,7 @@ async fn accept_connection(stream: TcpStream, engine_main: Arc<Mutex<engine::Mai
                     println!("Received a message from {}: {}", addr, text);
                     let directive: engine::Directive =
                         serde_json::from_str(text).unwrap_or_default();
-                    let resolved = resolve_directive(directive).await;
+                    let resolved = elem::engine::resolve_directive(directive).await;
 
                     {
                         let mut main = engine_main.lock().unwrap();
