@@ -1,42 +1,9 @@
-use std::cell::UnsafeCell;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::Arc;
-
+use crate::node::{create_node, shallow_clone, NodeRepr, ShallowNodeRepr};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-
-#[derive(Serialize, Deserialize)]
-pub struct NodeRepr {
-    hash: i32,
-    kind: String,
-    props: serde_json::Map<String, serde_json::Value>,
-    output_channel: u32,
-    children: Vec<NodeRepr>,
-}
-
-fn create_node(
-    kind: &str,
-    props: serde_json::Map<String, serde_json::Value>,
-    children: Vec<NodeRepr>,
-) -> NodeRepr {
-    let mut hasher = DefaultHasher::new();
-
-    kind.hash(&mut hasher);
-    props.hash(&mut hasher);
-
-    for child in children.iter() {
-        child.hash.hash(&mut hasher);
-    }
-
-    NodeRepr {
-        hash: hasher.finish() as i32,
-        kind: kind.to_string(),
-        props,
-        output_channel: 0,
-        children,
-    }
-}
+use std::cell::UnsafeCell;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 fn root(x: NodeRepr) -> NodeRepr {
     create_node(
@@ -90,24 +57,6 @@ macro_rules! constant {
             constant(&props)
         }
     };
-}
-
-struct ShallowNodeRepr {
-    hash: i32,
-    kind: String,
-    props: serde_json::Map<String, serde_json::Value>,
-    output_channel: u32,
-    children: Vec<i32>,
-}
-
-fn shallow_clone(node: &NodeRepr) -> ShallowNodeRepr {
-    ShallowNodeRepr {
-        hash: node.hash,
-        kind: node.kind.clone(),
-        props: node.props.clone(),
-        output_channel: node.output_channel,
-        children: node.children.iter().map(|n| n.hash).collect::<Vec<i32>>(),
-    }
 }
 
 #[derive(Serialize, Deserialize, Default)]
