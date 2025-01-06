@@ -12,3 +12,7 @@ tokio = { version = "1.41.1", features = ["full"] }
 
 [build-dependencies]
 cxx-build = "1.0.131"
+
+[[example]]
+name = "static"
+crate-type = ["staticlib"]
