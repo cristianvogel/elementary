@@ -1,0 +1,11 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+elem = { path = "../elem" }
+hound = "3.5.1"
+serde = "1.0.217"
+serde_json = "1.0.136"
+tokio = "1.43.0"

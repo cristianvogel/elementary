@@ -1,16 +1,9 @@
 use crate::node::{shallow_clone, NodeRepr, ShallowNodeRepr};
 use crate::std::prelude::*;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::cell::UnsafeCell;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-
-#[derive(Serialize, Deserialize, Default)]
-pub struct Directive {
-    pub graph: Option<Vec<NodeRepr>>,
-    pub resources: Option<HashMap<String, String>>,
-}
 
 pub trait FloatType: 'static {}
 impl FloatType for f32 {}
@@ -18,9 +11,9 @@ impl FloatType for f64 {}
 
 #[derive(Default)]
 pub struct AudioBuffer<T> {
-    data: Vec<T>,
-    channels: usize,
-    frames: usize,
+    pub data: Vec<T>,
+    pub channels: usize,
+    pub frames: usize,
 }
 
 impl<T> AudioBuffer<T>
@@ -36,67 +29,9 @@ where
     }
 }
 
-pub struct ResolvedDirective {
+pub struct Directive {
     pub graph: Option<Vec<NodeRepr>>,
     pub resources: Option<HashMap<String, AudioBuffer<f32>>>,
-}
-
-fn decode_audio_data(data: &Vec<u8>) -> Option<AudioBuffer<f32>> {
-    use hound;
-
-    let mut reader = hound::WavReader::new(data.as_slice()).unwrap();
-    let bit_depth = reader.spec().bits_per_sample as f64;
-    dbg!(reader.spec().sample_rate);
-    let interleaved_buffer = reader
-        .samples::<i32>()
-        .map(|x| x.unwrap() as f64 / (2.0f64.powf(bit_depth) - 1.0))
-        .collect::<Vec<f64>>();
-    let num_channels = reader.spec().channels as usize;
-    let num_frames = (reader.len() as usize) / num_channels;
-
-    // Hmm... I'm confused. The Hound docs suggest that the data is interleaved,
-    // but it doesn't actually appear to be.
-    // let mut deinterleaved = Vec::new();
-    // deinterleaved.resize(interleaved_buffer.len(), 0.0f32);
-
-    // for i in 0..num_channels {
-    //     for j in 0..num_frames {
-    //         deinterleaved[i * num_frames + j] = interleaved_buffer[i + j * num_channels] as f32;
-    //     }
-    // }
-
-    Some(AudioBuffer::<f32> {
-        data: interleaved_buffer
-            .into_iter()
-            .map(|x| x as f32)
-            .collect::<Vec<f32>>(),
-        channels: num_channels,
-        frames: num_frames,
-    })
-}
-
-async fn resolve_resources(
-    resources: &HashMap<String, String>,
-) -> HashMap<String, AudioBuffer<f32>> {
-    let mut result = HashMap::new();
-
-    for (name, path) in resources.iter() {
-        if let Ok(contents) = tokio::fs::read(path).await {
-            let _ = result.insert(name.clone(), decode_audio_data(&contents).unwrap());
-        }
-    }
-
-    result
-}
-
-pub async fn resolve_directive(directive: Directive) -> ResolvedDirective {
-    ResolvedDirective {
-        graph: directive.graph,
-        resources: match directive.resources {
-            None => None,
-            Some(rs) => Some(resolve_resources(&rs).await),
-        },
-    }
 }
 
 #[cxx::bridge]
@@ -298,7 +233,7 @@ impl MainHandle {
         instructions
     }
 
-    pub fn render(&mut self, directive: ResolvedDirective) -> Result<i32, &str> {
+    pub fn render(&mut self, directive: Directive) -> Result<i32, &str> {
         if let Some(resources) = directive.resources {
             for (k, v) in resources.into_iter() {
                 let rc =
@@ -337,7 +272,7 @@ pub fn new_engine(sample_rate: f64, block_size: usize) -> (MainHandle, ProcessHa
     )));
     let roots = vec![cycle];
 
-    let _ = main.render(ResolvedDirective {
+    let _ = main.render(Directive {
         graph: Some(roots),
         resources: None,
     });

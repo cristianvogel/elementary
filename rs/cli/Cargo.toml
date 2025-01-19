@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 elem = { path = "../elem" }
+server = { path = "../server" }
 cxx = "1.0.131"
 env_logger = "0.11.5"
 futures-util = "0.3.31"

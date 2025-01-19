@@ -106,9 +106,9 @@ async fn accept_connection(stream: TcpStream, engine_main: Arc<Mutex<engine::Mai
             match msg.to_text() {
                 Ok(text) => {
                     println!("Received a message from {}: {}", addr, text);
-                    let directive: engine::Directive =
+                    let directive: server::UnresolvedDirective =
                         serde_json::from_str(text).unwrap_or_default();
-                    let resolved = elem::engine::resolve_directive(directive).await;
+                    let resolved = server::resolve_directive(directive).await;
 
                     {
                         let mut main = engine_main.lock().unwrap();
