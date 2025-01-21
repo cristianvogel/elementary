@@ -1,9 +1,5 @@
 <div align="center">
-  <picture>
-  <source srcset="https://github.com/elemaudio/elementary/logo/Lockup.svg" media="(prefers-color-scheme: light)">
-  <source srcset="https://github.com/elemaudio/elementary/logo/Lockup-light.svg" media="(prefers-color-scheme: dark)">
-  <img src="https://github.com/elemaudio/elementary/logo/Lockup.svg" alt="Elementary Audio logo" />
-</picture>
+  <img src="https://elementary.audio/Lockup.svg" alt="Elementary Audio logo" />
   <br /><br />
 
   [![CI Status](https://github.com/elemaudio/elementary/actions/workflows/main.yml/badge.svg)](https://github.com/elemaudio/elementary/actions)
