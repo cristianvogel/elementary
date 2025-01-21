@@ -1,8 +1,8 @@
 <div align="center">
   <picture>
-  <source srcset="logo/Lockup.svg" media="(prefers-color-scheme: light)">
-  <source srcset="logo/Lockup-light.svg" media="(prefers-color-scheme: dark)">
-  <img height="120px" src="https://www.elementary.audio/Lockup.svg" alt="Elementary Audio logo" />
+  <source srcset="https://github.com/elemaudio/elementary/logo/Lockup.svg" media="(prefers-color-scheme: light)">
+  <source srcset="https://github.com/elemaudio/elementary/logo/Lockup-light.svg" media="(prefers-color-scheme: dark)">
+  <img src="https://github.com/elemaudio/elementary/logo/Lockup.svg" alt="Elementary Audio logo" />
 </picture>
   <br /><br />
 
